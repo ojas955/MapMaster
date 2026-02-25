@@ -518,15 +518,5 @@ On first startup, the backend auto-seeds demo data. Use these credentials:
 
 ---
 
-## 📄 License
 
-This project is open source and available under the [MIT License](LICENSE).
-
----
-
-<p align="center">
-  Built with ❤️ for the future of skill assessment
-  <br />
-  <strong>KaushalyaAI</strong> — Because real skills deserve real evaluation. 🧠⚡
-</p>
 
