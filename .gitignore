@@ -2,6 +2,7 @@
 # Environment / API Keys
 # ========================
 .env
+.env.example
 .env.local
 .env.*.local
 backend_final/.env
