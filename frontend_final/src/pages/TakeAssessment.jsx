@@ -5,6 +5,33 @@ import Proctor from '../components/Proctor'
 import ProctorStats from '../components/ProctorStats'
 import api from '../api/client'
 
+const CAPTURE_PATTERN = /(draw|diagram|flow\s?chart|figure|sketch|illustrate|white\s?paper|whiteboard|write the steps|write steps|commands?|command sequence|workflow|architecture|block diagram|process flow)/i
+
+function questionNeedsCapture(question) {
+  if (!question) return false
+  if (question.capture_required) return true
+  const type = (question.type || '').toLowerCase()
+  if (['whiteboard', 'whiteboard_capture', 'diagram', 'diagram_capture', 'flowchart', 'commands', 'steps', 'capture', 'visual'].includes(type)) {
+    return true
+  }
+  return CAPTURE_PATTERN.test(question.text || '')
+}
+
+function getCaptureModeLabel(question) {
+  const mode = question?.capture_mode || question?.type || 'capture'
+  if (mode.includes('command')) return 'Commands'
+  if (mode.includes('step')) return 'Steps'
+  if (mode.includes('diagram') || mode.includes('flow')) return 'Diagram'
+  return 'Whiteboard'
+}
+
+function isQuestionAnswered(question, index, answers, captureStatusByQuestion) {
+  const hasText = !!answers[index]?.trim()
+  const capture = captureStatusByQuestion[String(index)]
+  const hasCapture = ['processing', 'completed'].includes(capture?.status)
+  return questionNeedsCapture(question) ? (hasText || hasCapture) : hasText
+}
+
 export default function TakeAssessment() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -18,6 +45,12 @@ export default function TakeAssessment() {
   const [submitting, setSubmitting] = useState(false)
   const [loadingFollowup, setLoadingFollowup] = useState(false)
   const [showFollowup, setShowFollowup] = useState(null)
+  const [captureDevices, setCaptureDevices] = useState([])
+  const [selectedCameraId, setSelectedCameraId] = useState('')
+  const [capturePanelFor, setCapturePanelFor] = useState(null)
+  const [captureStatusByQuestion, setCaptureStatusByQuestion] = useState({})
+  const [captureBusy, setCaptureBusy] = useState(false)
+  const [captureError, setCaptureError] = useState('')
 
   // Anti-cheat
   const [tabSwitches, setTabSwitches] = useState(0)
@@ -34,6 +67,9 @@ export default function TakeAssessment() {
   const streamRef = useRef(null)
   const videoPreviewRef = useRef(null)
   const chunksRef = useRef([])
+  const captureStreamRef = useRef(null)
+  const captureVideoRef = useRef(null)
+  const captureCanvasRef = useRef(null)
 
   // Speech-to-text
   const [isListening, setIsListening] = useState(false)
@@ -45,6 +81,16 @@ export default function TakeAssessment() {
       setAssessment(r.data)
       setTimeLeft(r.data.time_limit_minutes * 60)
     }).catch(() => navigate('/dashboard'))
+  }, [id])
+
+  useEffect(() => {
+    api.get(`/assessments/${id}/captures/me`).then((res) => {
+      const next = {}
+      res.data.forEach((item) => {
+        next[String(item.question_index)] = item
+      })
+      setCaptureStatusByQuestion(next)
+    }).catch(() => {})
   }, [id])
 
   // Timer
@@ -75,10 +121,168 @@ export default function TakeAssessment() {
   useEffect(() => {
     return () => {
       if (proctorRef.current) proctorRef.current.stop()
+      if (captureStreamRef.current) {
+        captureStreamRef.current.getTracks().forEach(track => track.stop())
+        captureStreamRef.current = null
+      }
     }
   }, [])
 
+  useEffect(() => {
+    const hasProcessing = Object.values(captureStatusByQuestion).some(item => item?.status === 'processing')
+    if (!hasProcessing) return
+
+    const timer = setInterval(() => {
+      api.get(`/assessments/${id}/captures/me`).then((res) => {
+        const next = {}
+        res.data.forEach((item) => {
+          next[String(item.question_index)] = item
+        })
+        setCaptureStatusByQuestion(next)
+      }).catch(() => {})
+    }, 3500)
+
+    return () => clearInterval(timer)
+  }, [captureStatusByQuestion, id])
+
   const formatTime = (s) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`
+
+  const stopCaptureCamera = useCallback(() => {
+    if (captureStreamRef.current) {
+      captureStreamRef.current.getTracks().forEach(track => track.stop())
+      captureStreamRef.current = null
+    }
+    if (captureVideoRef.current) {
+      captureVideoRef.current.srcObject = null
+    }
+  }, [])
+
+  const loadCameraDevices = useCallback(async () => {
+    if (!navigator.mediaDevices?.getUserMedia || !navigator.mediaDevices?.enumerateDevices) {
+      throw new Error('Camera APIs are not supported in this browser.')
+    }
+
+    const permissionStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+    permissionStream.getTracks().forEach(track => track.stop())
+
+    const devices = await navigator.mediaDevices.enumerateDevices()
+    const videos = devices.filter(device => device.kind === 'videoinput')
+    setCaptureDevices(videos)
+    if (!selectedCameraId && videos.length > 0) {
+      setSelectedCameraId(videos[1]?.deviceId || videos[0].deviceId)
+    }
+    return videos
+  }, [selectedCameraId])
+
+  const startCaptureCamera = useCallback(async (deviceId) => {
+    stopCaptureCamera()
+    const constraints = {
+      video: deviceId
+        ? {
+            deviceId: { exact: deviceId },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          }
+        : {
+            facingMode: 'user',
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+      audio: false,
+    }
+
+    const stream = await navigator.mediaDevices.getUserMedia(constraints)
+    captureStreamRef.current = stream
+    if (captureVideoRef.current) {
+      captureVideoRef.current.srcObject = stream
+      await captureVideoRef.current.play().catch(() => {})
+    }
+  }, [stopCaptureCamera])
+
+  const openCapturePanel = async (questionIndex) => {
+    setCaptureError('')
+    setCapturePanelFor(questionIndex)
+    try {
+      const devices = await loadCameraDevices()
+      const nextDeviceId = selectedCameraId || devices[1]?.deviceId || devices[0]?.deviceId
+      if (nextDeviceId) {
+        setSelectedCameraId(nextDeviceId)
+        await startCaptureCamera(nextDeviceId)
+      }
+    } catch (err) {
+      setCaptureError(err?.message || 'Could not access the camera. Check permissions and try again.')
+    }
+  }
+
+  const closeCapturePanel = useCallback(() => {
+    stopCaptureCamera()
+    setCapturePanelFor(null)
+  }, [stopCaptureCamera])
+
+  const handleCameraChange = async (deviceId) => {
+    setSelectedCameraId(deviceId)
+    setCaptureError('')
+    try {
+      await startCaptureCamera(deviceId)
+    } catch (err) {
+      setCaptureError(err?.message || 'Unable to switch to the selected camera.')
+    }
+  }
+
+  const handleCaptureUpload = async (questionIndex) => {
+    if (!captureVideoRef.current || !captureCanvasRef.current) return
+
+    const video = captureVideoRef.current
+    const canvas = captureCanvasRef.current
+    const width = video.videoWidth || 1280
+    const height = video.videoHeight || 720
+    canvas.width = width
+    canvas.height = height
+
+    const context = canvas.getContext('2d')
+    context.drawImage(video, 0, 0, width, height)
+
+    setCaptureBusy(true)
+    setCaptureError('')
+    setCaptureStatusByQuestion(prev => ({
+      ...prev,
+      [String(questionIndex)]: { ...(prev[String(questionIndex)] || {}), status: 'uploading' }
+    }))
+
+    try {
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92))
+      if (!blob) throw new Error('Could not create image from the camera frame.')
+      const formData = new FormData()
+      formData.append('capture_file', blob, `whiteboard-q${questionIndex + 1}.jpg`)
+      formData.append('typed_context', answers[questionIndex] || '')
+      formData.append('device_label', captureDevices.find(d => d.deviceId === selectedCameraId)?.label || 'Camera')
+
+      const res = await api.post(`/assessments/${id}/questions/${questionIndex}/capture`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+
+      setCaptureStatusByQuestion(prev => ({
+        ...prev,
+        [String(questionIndex)]: {
+          ...(prev[String(questionIndex)] || {}),
+          capture_id: res.data.capture_id,
+          question_index: questionIndex,
+          status: 'processing',
+          device_label: captureDevices.find(d => d.deviceId === selectedCameraId)?.label || 'Camera',
+          analysis_summary: 'Image uploaded. AI is analyzing your handwritten response in the background.',
+        }
+      }))
+      closeCapturePanel()
+    } catch (err) {
+      setCaptureError(err?.response?.data?.detail || 'Capture upload failed.')
+      setCaptureStatusByQuestion(prev => ({
+        ...prev,
+        [String(questionIndex)]: { ...(prev[String(questionIndex)] || {}), status: 'failed' }
+      }))
+    } finally {
+      setCaptureBusy(false)
+    }
+  }
 
   // ─── Speech-to-Text (Web Speech API) ─────────────────────────────────────
   const startSpeechToText = () => {
@@ -224,6 +428,19 @@ export default function TakeAssessment() {
   // ─── Submit ───────────────────────────────────────────────────────────────
   const handleSubmit = async () => {
     if (submitting) return
+
+    const missingCaptureQuestions = (assessment?.questions || []).filter((question, index) => {
+      if (!questionNeedsCapture(question)) return false
+      const capture = captureStatusByQuestion[String(index)]
+      const hasText = !!answers[index]?.trim()
+      return !hasText && !capture?.capture_id && capture?.status !== 'processing' && capture?.status !== 'completed'
+    })
+
+    if (missingCaptureQuestions.length > 0) {
+      const confirmed = window.confirm('Some whiteboard/capture questions do not have an uploaded image yet. Submit anyway?')
+      if (!confirmed) return
+    }
+
     setSubmitting(true)
 
     // Get proctoring stats
@@ -245,6 +462,11 @@ export default function TakeAssessment() {
         assessment_id: parseInt(id),
         answers: finalAnswers,
         time_taken_seconds: assessment.time_limit_minutes * 60 - timeLeft,
+        visual_capture_ids: Object.fromEntries(
+          Object.entries(captureStatusByQuestion)
+            .filter(([, value]) => value?.capture_id)
+            .map(([key, value]) => [key, value.capture_id])
+        ),
         anticheat_flags: {
           tab_switches: tabSwitches,
           copy_paste_count: copyPasteCount
@@ -262,7 +484,7 @@ export default function TakeAssessment() {
 
   const questions = assessment.questions || []
   const q = questions[currentQ]
-  const progress = Object.keys(answers).filter(k => answers[k]?.trim()).length
+  const progress = questions.filter((question, index) => isQuestionAnswered(question, index, answers, captureStatusByQuestion)).length
 
   return (
     <div className="page-container" style={{ maxWidth: 1100 }}>
@@ -302,12 +524,16 @@ export default function TakeAssessment() {
           {/* Question navigator */}
           <div style={{ display: 'flex', gap: 6, marginBottom: 24, flexWrap: 'wrap' }}>
             {questions.map((_, i) => (
-              <button key={i} onClick={() => { setShowFollowup(null); setCurrentQ(i) }}
+              <button key={i} onClick={() => { setShowFollowup(null); setCurrentQ(i); setCapturePanelFor(null); stopCaptureCamera() }}
                 style={{
                   width: 36, height: 36, borderRadius: 8, border: 'none', cursor: 'pointer',
                   fontWeight: 600, fontSize: 13,
-                  background: i === currentQ ? 'var(--primary)' : answers[i]?.trim() ? 'var(--success)' : 'var(--glass-bg)',
-                  color: (i === currentQ || answers[i]?.trim()) ? '#fff' : 'var(--text-secondary)',
+                  background: i === currentQ
+                    ? 'var(--primary)'
+                    : isQuestionAnswered(questions[i], i, answers, captureStatusByQuestion)
+                      ? 'var(--success)'
+                      : 'var(--glass-bg)',
+                  color: (i === currentQ || isQuestionAnswered(questions[i], i, answers, captureStatusByQuestion)) ? '#fff' : 'var(--text-secondary)',
                 }}>{i + 1}</button>
             ))}
           </div>
@@ -328,10 +554,46 @@ export default function TakeAssessment() {
               </p>
             )}
 
+            {questionNeedsCapture(q) && (
+              <div className="card" style={{ marginBottom: 16, background: 'rgba(2,136,209,0.06)', border: '1px solid rgba(2,136,209,0.18)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+                  <div>
+                    <div style={{ fontWeight: 700, color: 'var(--accent)', marginBottom: 4 }}>📷 {getCaptureModeLabel(q)} response enabled</div>
+                    <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                      Use your laptop camera or an attached external webcam to capture your handwritten page. Analysis runs in the background.
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {captureStatusByQuestion[String(currentQ)]?.status && (
+                      <span className="badge" style={{
+                        background: captureStatusByQuestion[String(currentQ)]?.status === 'completed'
+                          ? 'rgba(46,125,50,0.12)'
+                          : captureStatusByQuestion[String(currentQ)]?.status === 'failed'
+                            ? 'rgba(198,40,40,0.12)'
+                            : 'rgba(230,81,0,0.12)',
+                        color: captureStatusByQuestion[String(currentQ)]?.status === 'completed'
+                          ? 'var(--success)'
+                          : captureStatusByQuestion[String(currentQ)]?.status === 'failed'
+                            ? 'var(--error)'
+                            : 'var(--warning)'
+                      }}>
+                        {captureStatusByQuestion[String(currentQ)]?.status === 'completed' ? '✅ Analyzed' : captureStatusByQuestion[String(currentQ)]?.status === 'failed' ? '⚠ Failed' : '⏳ Processing'}
+                      </span>
+                    )}
+                    <button className="btn btn-secondary" onClick={() => openCapturePanel(currentQ)}>
+                      {captureStatusByQuestion[String(currentQ)]?.capture_id ? '♻ Retake Capture' : '📸 Capture'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             <textarea
               value={answers[currentQ] || ''}
               onChange={(e) => setAnswers(prev => ({ ...prev, [currentQ]: e.target.value }))}
-              placeholder="Type your detailed answer here... Use specific examples and demonstrate your understanding."
+              placeholder={questionNeedsCapture(q)
+                ? 'Optional typed note: explain labels, commands, or anything that may be hard to read from the image.'
+                : 'Type your detailed answer here... Use specific examples and demonstrate your understanding.'}
               rows={8}
               style={{
                 width: '100%', padding: 16, borderRadius: 12, border: '1px solid var(--border)',
@@ -370,6 +632,12 @@ export default function TakeAssessment() {
                     style={{ fontSize: 13, padding: '8px 14px' }}>
                     📹 {t('recordVideo')}
                   </button>
+                  {questionNeedsCapture(q) && (
+                    <button className="btn btn-secondary" onClick={() => openCapturePanel(currentQ)}
+                      style={{ fontSize: 13, padding: '8px 14px' }}>
+                      📸 Capture White Paper
+                    </button>
+                  )}
                   {answers[currentQ]?.trim()?.length > 20 && !followups[currentQ] && (
                     <button className="btn btn-secondary" onClick={() => requestFollowup(currentQ)}
                       disabled={loadingFollowup}
@@ -395,6 +663,63 @@ export default function TakeAssessment() {
             {isRecording && recordingType === 'video' && (
               <div style={{ marginTop: 12, borderRadius: 12, overflow: 'hidden', maxWidth: 320 }}>
                 <video ref={videoPreviewRef} muted style={{ width: '100%', borderRadius: 12, background: '#000' }} />
+              </div>
+            )}
+
+            {questionNeedsCapture(q) && captureStatusByQuestion[String(currentQ)]?.analysis_summary && capturePanelFor !== currentQ && (
+              <div style={{ marginTop: 14, padding: '12px 14px', borderRadius: 10, background: 'var(--bg-input)', border: '1px solid var(--border)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
+                  <strong style={{ color: 'var(--accent)' }}>Capture analysis</strong>
+                  {captureStatusByQuestion[String(currentQ)]?.overall_score ? (
+                    <span className="badge badge-primary">{captureStatusByQuestion[String(currentQ)]?.overall_score}/10 visual score</span>
+                  ) : null}
+                </div>
+                <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+                  {captureStatusByQuestion[String(currentQ)]?.analysis_summary}
+                </div>
+              </div>
+            )}
+
+            {capturePanelFor === currentQ && (
+              <div className="card" style={{ marginTop: 16, background: 'rgba(255,255,255,0.98)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginBottom: 14 }}>
+                  <div>
+                    <h4 style={{ margin: 0, fontSize: '1rem' }}>📷 Capture handwritten answer</h4>
+                    <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 4 }}>
+                      Pick a camera, frame the full paper, then capture. External webcams are supported when connected.
+                    </p>
+                  </div>
+                  <button className="btn btn-secondary btn-sm" onClick={closeCapturePanel}>Close</button>
+                </div>
+
+                <div className="grid-2" style={{ alignItems: 'start' }}>
+                  <div>
+                    <label className="form-label" style={{ marginBottom: 6 }}>Camera source</label>
+                    <select className="form-input form-select" value={selectedCameraId} onChange={(e) => handleCameraChange(e.target.value)}>
+                      {captureDevices.length === 0 ? <option value="">No camera detected</option> : captureDevices.map(device => (
+                        <option key={device.deviceId} value={device.deviceId}>{device.label || `Camera ${device.deviceId.slice(0, 5)}`}</option>
+                      ))}
+                    </select>
+                    <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
+                      Tip: if proctoring uses the laptop camera, choose the external webcam here for a smoother whiteboard setup.
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                    <button className="btn btn-secondary btn-sm" onClick={() => handleCameraChange(selectedCameraId)}>
+                      🔄 Refresh Camera
+                    </button>
+                    <button className="btn btn-primary btn-sm" onClick={() => handleCaptureUpload(currentQ)} disabled={captureBusy}>
+                      {captureBusy ? '⏳ Uploading...' : '📸 Capture & Analyze'}
+                    </button>
+                  </div>
+                </div>
+
+                {captureError && <div className="alert alert-error" style={{ marginTop: 12 }}>{captureError}</div>}
+
+                <div style={{ marginTop: 14, borderRadius: 14, overflow: 'hidden', background: '#0f172a', border: '1px solid rgba(255,255,255,0.08)' }}>
+                  <video ref={captureVideoRef} muted playsInline style={{ width: '100%', maxHeight: 420, objectFit: 'cover', display: 'block' }} />
+                </div>
+                <canvas ref={captureCanvasRef} style={{ display: 'none' }} />
               </div>
             )}
           </div>
@@ -429,13 +754,13 @@ export default function TakeAssessment() {
 
           {/* Navigation */}
           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-            <button className="btn btn-secondary" onClick={() => { setShowFollowup(null); setCurrentQ(Math.max(0, currentQ - 1)) }}
+            <button className="btn btn-secondary" onClick={() => { setShowFollowup(null); setCapturePanelFor(null); stopCaptureCamera(); setCurrentQ(Math.max(0, currentQ - 1)) }}
               disabled={currentQ === 0}>
               {t('previous')}
             </button>
             <div style={{ display: 'flex', gap: 12 }}>
               {currentQ < questions.length - 1 ? (
-                <button className="btn" onClick={() => { setShowFollowup(null); setCurrentQ(currentQ + 1) }}>
+                <button className="btn" onClick={() => { setShowFollowup(null); setCapturePanelFor(null); stopCaptureCamera(); setCurrentQ(currentQ + 1) }}>
                   {t('next')}
                 </button>
               ) : (

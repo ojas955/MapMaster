@@ -3,8 +3,18 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 
 export default function Landing() {
-  const { user } = useAuth()
+  const { user, logout } = useAuth()
   const navigate = useNavigate()
+
+  const goToLogin = () => {
+    if (user) logout()
+    navigate('/login')
+  }
+
+  const goToRegister = () => {
+    if (user) logout()
+    navigate('/register')
+  }
 
   const features = [
     { icon: '🧠', title: 'AI-Powered Questions', desc: 'Upload any PDF and get instantly generated higher-order thinking questions aligned with Bloom\'s Taxonomy.' },
@@ -32,17 +42,14 @@ export default function Landing() {
             KaushalyaAI
           </span>
         </div>
-        <div style={{ display: 'flex', gap: '12px' }}>
-          {user ? (
-            <button onClick={() => navigate('/dashboard')} className="btn btn-primary">
-              Go to Dashboard →
+        <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+          {user && (
+            <button onClick={() => navigate('/dashboard')} className="btn btn-secondary">
+              Go to Dashboard
             </button>
-          ) : (
-            <>
-              <Link to="/login" className="btn btn-secondary">Sign In</Link>
-              <Link to="/register" className="btn btn-primary">Get Started Free →</Link>
-            </>
           )}
+          <button onClick={goToLogin} className="btn btn-secondary">Sign In</button>
+          <button onClick={goToRegister} className="btn btn-primary">Get Started Free →</button>
         </div>
       </nav>
 
@@ -71,12 +78,12 @@ export default function Landing() {
           </p>
 
           <div style={{ display: 'flex', gap: '16px', justifyContent: 'center', flexWrap: 'wrap' }}>
-            <Link to="/register" className="btn btn-primary btn-lg" style={{ fontSize: '1.05rem' }}>
+            <button onClick={goToRegister} className="btn btn-primary btn-lg" style={{ fontSize: '1.05rem' }}>
               🚀 Start Free Assessment
-            </Link>
-            <Link to="/login" className="btn btn-secondary btn-lg">
+            </button>
+            <button onClick={goToLogin} className="btn btn-secondary btn-lg">
               📊 View Demo Dashboard
-            </Link>
+            </button>
           </div>
         </div>
 
@@ -139,8 +146,8 @@ export default function Landing() {
             Join educators and HR professionals who care about what candidates can actually <em>do</em>, not just what they've memorized.
           </p>
           <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap' }}>
-            <Link to="/register" className="btn btn-primary btn-lg">Create Free Account →</Link>
-            <Link to="/login" className="btn btn-secondary btn-lg">Demo Login</Link>
+            <button onClick={goToRegister} className="btn btn-primary btn-lg">Create Free Account →</button>
+            <button onClick={goToLogin} className="btn btn-secondary btn-lg">Demo Login</button>
           </div>
           <p style={{ marginTop: '20px', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
             Demo: admin@kaushalya.ai / admin123 &nbsp;|&nbsp; student@kaushalya.ai / student123

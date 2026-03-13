@@ -122,6 +122,7 @@ class SubmissionCreate(BaseModel):
     time_taken_seconds: int = 0
     anticheat_flags: Optional[Dict[str, Any]] = {}
     proctoring_data: Optional[Dict[str, Any]] = None
+    visual_capture_ids: Optional[Dict[str, int]] = None
 
 
 class SubmissionResponse(BaseModel):

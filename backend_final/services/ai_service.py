@@ -78,8 +78,9 @@ TEXT FROM DOCUMENT:
 REQUIREMENTS:
 - Difficulty: {difficulty}
 - Language: {lang_name}
-- Types: open_ended (essay-style), scenario (real-world application), explanation (explain WHY)
+- Types: open_ended (essay-style), scenario (real-world application), explanation (explain WHY), whiteboard_capture (draw/write on paper for diagrams, flowcharts, commands, or steps)
 - Each question should reference a SPECIFIC section, formula, concept, or example from the text
+- If the document naturally involves process flows, architectures, command sequences, or step-by-step procedures, you MAY use type "whiteboard_capture"
 
 Respond ONLY with a valid JSON array:
 [

@@ -219,6 +219,7 @@ export default function StudentDashboard() {
                     <span className={`badge ${getDifficultyBadge(a.difficulty)}`}>{a.difficulty}</span>
                     <span className="badge badge-primary">⏱ {a.time_limit_minutes}m</span>
                     <span className="badge badge-cyan">❓ {a.num_questions}Q</span>
+                    {a.has_capture_questions && <span className="badge badge-warning">📷 Whiteboard</span>}
                   </div>
                   <button className="btn btn-primary btn-sm" style={{ width: '100%', justifyContent: 'center' }}>
                     {a.user_submitted ? `🔄 Retake` : `▶ ${t('takeAssessment')}`}

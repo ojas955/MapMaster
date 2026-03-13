@@ -20,7 +20,7 @@ export default function AssessmentResult() {
 
   if (!data) return <div className="page-container"><div className="loading-spinner" /></div>
 
-  const { total_score, scores, feedback, confidence_scores, anticheat, pathway, xp_gained, proctoring } = data
+  const { total_score, scores, feedback, confidence_scores, anticheat, pathway, xp_gained, proctoring, visual_capture_results } = data
 
   const generateCert = async () => {
     setCertLoading(true)
@@ -253,6 +253,27 @@ export default function AssessmentResult() {
             <p style={{ fontSize: 15, color: 'var(--text-secondary)', lineHeight: 1.6, margin: 0, padding: '10px 14px', background: 'var(--glass-bg)', borderRadius: 8 }}>
               {feedback[idx]}
             </p>
+          )}
+
+          {visual_capture_results?.[idx] && (
+            <div style={{ marginTop: 10, padding: '10px 14px', borderRadius: 8, background: 'rgba(2,136,209,0.06)', border: '1px solid rgba(2,136,209,0.14)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+                <strong style={{ color: 'var(--accent)' }}>📷 Whiteboard capture analysis</strong>
+                {visual_capture_results[idx]?.overall_score ? (
+                  <span className="badge badge-primary">{visual_capture_results[idx].overall_score}/10</span>
+                ) : null}
+              </div>
+              {visual_capture_results[idx]?.summary && (
+                <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 8, lineHeight: 1.6 }}>
+                  {visual_capture_results[idx].summary}
+                </p>
+              )}
+              {visual_capture_results[idx]?.extracted_text && (
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', background: 'rgba(255,255,255,0.65)', borderRadius: 6, padding: '8px 10px' }}>
+                  <strong>Detected content:</strong> {visual_capture_results[idx].extracted_text}
+                </div>
+              )}
+            </div>
           )}
         </div>
       ))}

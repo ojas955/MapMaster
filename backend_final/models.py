@@ -90,6 +90,28 @@ class Submission(Base):
     certificate = relationship("Certificate", back_populates="submission", uselist=False)
 
 
+class VisualCapture(Base):
+    __tablename__ = "visual_captures"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    assessment_id = Column(Integer, ForeignKey("assessments.id"), nullable=False)
+    question_index = Column(Integer, nullable=False)
+    image_path = Column(String(500), nullable=False)
+    mime_type = Column(String(100), default="image/jpeg")
+    device_label = Column(String(255), default="")
+    typed_context = Column(Text, default="")
+    status = Column(String(30), default="processing")
+    extracted_text = Column(Text)
+    analysis_summary = Column(Text)
+    scores = Column(JSON)
+    feedback = Column(Text)
+    overall_score = Column(Float, default=0.0)
+    evaluator_used = Column(String(50), default="pending")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class Certificate(Base):
     __tablename__ = "certificates"
 

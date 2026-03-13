@@ -74,6 +74,17 @@ export default function AdminDashboard() {
     setAssessments(prev => prev.filter(a => a.id !== id))
   }
 
+  const handleCreateWhiteboardDemo = async () => {
+    try {
+      const res = await api.post('/assessments/demo/whiteboard')
+      const assessRes = await api.get('/assessments')
+      setAssessments(assessRes.data)
+      navigate(`/assessment/${res.data.id}`)
+    } catch (err) {
+      alert(err?.response?.data?.detail || 'Could not create the whiteboard demo assessment.')
+    }
+  }
+
   return (
     <div className="page-layout">
       <Sidebar />
@@ -195,6 +206,19 @@ export default function AdminDashboard() {
             >
               {uploading ? '⏳ Processing PDF & Generating Questions...' : '🤖 Upload & Generate Assessment'}
             </button>
+
+            <div style={{ marginTop: '14px', paddingTop: '14px', borderTop: '1px solid var(--border)' }}>
+              <button
+                className="btn btn-secondary"
+                style={{ width: '100%', justifyContent: 'center' }}
+                onClick={handleCreateWhiteboardDemo}
+              >
+                🧾 Create Whiteboard Demo Assessment
+              </button>
+              <p style={{ marginTop: '8px', fontSize: '0.82rem', color: 'var(--text-secondary)' }}>
+                Generates a ready-to-test assessment with diagram and command-writing questions that use the new capture workflow.
+              </p>
+            </div>
           </div>
         </div>
 
@@ -211,6 +235,7 @@ export default function AdminDashboard() {
                     <span className={`badge ${a.difficulty === 'beginner' ? 'badge-success' : a.difficulty === 'advanced' ? 'badge-danger' : 'badge-warning'}`}>{a.difficulty}</span>
                     <span className="badge badge-cyan">{a.num_questions}Q</span>
                     <span className="badge badge-primary">👥 {a.submission_count}</span>
+                    {a.has_capture_questions && <span className="badge badge-warning">📷 Whiteboard</span>}
                   </div>
                 </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
